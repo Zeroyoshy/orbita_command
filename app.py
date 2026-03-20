@@ -280,7 +280,9 @@ def extract_response_text(response):
 
 def normalize_database_url(database_url):
     if database_url.startswith("postgres://"):
-        return database_url.replace("postgres://", "postgresql://", 1)
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    if database_url.startswith("postgresql://") and "+psycopg" not in database_url:
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
     return database_url
 
 
