@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body_class %}auth-body{% endblock %}
+{% block content %}
+<section class="auth-layout">
+    <article class="auth-story panel panel-feature">
+        <span class="section-kicker">Alta de operador</span>
+        <h2>Crea una cuenta con politica de acceso reforzada.</h2>
+        <p>El sistema exige contraseñas robustas y guarda cada alta en la bitacora de auditoria.</p>
+
+        <div class="story-grid">
+            <div class="story-card">
+                <span class="story-value">12+</span>
+                <p>Caracteres minimos con mayusculas, minusculas, numeros y simbolos.</p>
+            </div>
+            <div class="story-card">
+                <span class="story-value">Roles</span>
+                <p>El sistema separa permisos administrativos y operativos.</p>
+            </div>
+        </div>
+    </article>
+
+    <article class="auth-card login-panel">
+        <span class="section-kicker">Registro</span>
+        <h2>Nuevo operador</h2>
+        <p>Completa el formulario para crear credenciales seguras.</p>
+
+        <form method="POST">
+            {{ form.hidden_tag() }}
+            <div class="form-group">
+                {{ form.username.label(class="form-label") }}
+                {{ form.username(class="nasa-input", placeholder="Nombre de operador") }}
+            </div>
+            <div class="form-group">
+                {{ form.password.label(class="form-label") }}
+                {{ form.password(class="nasa-input", placeholder="Clave fuerte") }}
+            </div>
+            <div class="form-group">
+                {{ form.confirm.label(class="form-label") }}
+                {{ form.confirm(class="nasa-input", placeholder="Repite la clave") }}
+            </div>
+            <div class="form-actions">
+                {{ form.submit(class="btn-nasa") }}
+            </div>
+        </form>
+
+        <p class="auth-link">¿Ya tienes acceso? <a href="{{ url_for('login') }}">Iniciar sesion</a></p>
+    </article>
+</section>
+{% endblock %}

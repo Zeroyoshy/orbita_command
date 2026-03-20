@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block body_class %}auth-body{% endblock %}
+{% block content %}
+<section class="auth-layout auth-layout-single">
+    <article class="auth-card error-panel panel">
+        <span class="section-kicker">Respuesta controlada</span>
+        <p class="error-code">Error {{ status_code }}</p>
+        <h2>La operacion no pudo completarse.</h2>
+        <p>{{ message }}</p>
+        <a href="{{ url_for('dashboard' if current_user.is_authenticated else 'login') }}" class="btn-nasa">Volver</a>
+    </article>
+</section>
+{% endblock %}

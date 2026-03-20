@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block body_class %}auth-body{% endblock %}
+{% block content %}
+<section class="auth-layout">
+    <article class="auth-story panel panel-feature">
+        <span class="section-kicker">Acceso seguro</span>
+        <h2>Controla misiones, prioridades y decisiones asistidas por IA.</h2>
+        <p>Entra al centro de control para administrar operaciones, registrar actividad y consultar sugerencias del asistente de Gemini.</p>
+
+        <div class="story-grid">
+            <div class="story-card">
+                <span class="story-value">24/7</span>
+                <p>Supervision visual del estado de cada mision.</p>
+            </div>
+            <div class="story-card">
+                <span class="story-value">Seguro</span>
+                <p>Sesiones protegidas, auditoria y acciones criticas validadas.</p>
+            </div>
+        </div>
+    </article>
+
+    <article class="auth-card login-panel">
+        <span class="section-kicker">Inicio de sesion</span>
+        <h2>Identificacion requerida</h2>
+        <p>Usa tus credenciales para abrir el panel operativo.</p>
+
+        <form method="POST">
+            {{ form.hidden_tag() }}
+            <div class="form-group">
+                {{ form.username.label(class="form-label") }}
+                {{ form.username(class="nasa-input", placeholder="Tu identificador") }}
+            </div>
+            <div class="form-group">
+                {{ form.password.label(class="form-label") }}
+                {{ form.password(class="nasa-input", placeholder="Tu clave segura") }}
+            </div>
+            <div class="form-actions">
+                {{ form.submit(class="btn-nasa") }}
+            </div>
+        </form>
+
+        <p class="auth-link">¿Sin credenciales? <a href="{{ url_for('register') }}">Crear acceso</a></p>
+    </article>
+</section>
+{% endblock %}

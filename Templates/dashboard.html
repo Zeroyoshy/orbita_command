@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero-panel panel">
+    <div class="hero-copy">
+        <span class="section-kicker">Panel operativo</span>
+        <h2>Vista general de misiones, prioridad y soporte inteligente.</h2>
+        <p>Administra lanzamientos, revisa progreso y consulta al asistente con contexto de cada operacion.</p>
+    </div>
+
+    <div class="hero-aside">
+        <div class="meta-stack">
+            <span class="meta-caption">IA habilitada</span>
+            <strong>{{ assistant_model if assistant_enabled else "No disponible" }}</strong>
+        </div>
+        <div class="meta-stack">
+            <span class="meta-caption">Estado de cabina</span>
+            <strong>Estable</strong>
+        </div>
+    </div>
+</section>
+
+<section class="hud-stats">
+    <article class="hud-box">
+        <span class="hud-label">Misiones totales</span>
+        <span class="hud-value">{{ stats.total }}</span>
+        <p>Operaciones visibles en tu panel actual.</p>
+    </article>
+    <article class="hud-box warning">
+        <span class="hud-label">En progreso</span>
+        <span class="hud-value">{{ stats.active }}</span>
+        <p>Misiones activas que requieren seguimiento.</p>
+    </article>
+    <article class="hud-box success">
+        <span class="hud-label">Completadas</span>
+        <span class="hud-value">{{ stats.done }}</span>
+        <p>Objetivos finalizados correctamente.</p>
+    </article>
+</section>
+
+<section class="workspace-grid">
+    <div class="workspace-stack">
+        <article class="panel control-panel">
+            <div class="panel-heading">
+                <span class="section-kicker">Nueva operacion</span>
+                <h3>Crear mision</h3>
+            </div>
+            <form method="POST">
+                {{ form.hidden_tag() }}
+                <div class="form-group">
+                    {{ form.title.label(class="form-label") }}
+                    {{ form.title(class="nasa-input", placeholder="Ej. Relevo de satelite Andromeda") }}
+                </div>
+                <div class="form-group">
+                    {{ form.priority.label(class="form-label") }}
+                    {{ form.priority(class="nasa-input") }}
+                </div>
+                <div class="form-group">
+                    {{ form.description.label(class="form-label") }}
+                    {{ form.description(class="nasa-input", rows="4", placeholder="Objetivo, restricciones y notas de ejecucion.") }}
+                </div>
+                {{ form.submit(class="btn-nasa btn-block") }}
+            </form>
+
+            <div class="signal-card">
+                <div class="signal-ring"></div>
+                <div>
+                    <span class="meta-caption">Canal de control</span>
+                    <strong>Sincronizado</strong>
+                </div>
+            </div>
+        </article>
+
+        <article class="panel assistant-panel">
+            <div class="panel-heading">
+                <span class="section-kicker">Asistente IA</span>
+                <h3>Consulta a Gemini</h3>
+            </div>
+
+            {% if assistant_enabled %}
+                <p class="panel-intro">Usa una mision como contexto y pide resumen, riesgos o siguientes pasos.</p>
+                <form method="POST" action="{{ url_for('assistant') }}">
+                    {{ assistant_form.hidden_tag() }}
+                    <div class="form-group">
+                        {{ assistant_form.mission_id.label(class="form-label") }}
+                        {{ assistant_form.mission_id(class="nasa-input") }}
+                    </div>
+                    <div class="form-group">
+                        {{ assistant_form.prompt.label(class="form-label") }}
+                        {{ assistant_form.prompt(class="nasa-input", rows="5", placeholder="Ej. Detecta riesgos, dependencias y siguientes pasos de esta mision.") }}
+                    </div>
+                    {{ assistant_form.submit(class="btn-nasa btn-secondary") }}
+                </form>
+
+                {% if assistant_result %}
+                    <div class="assistant-output">
+                        <span class="section-kicker">Respuesta</span>
+                        <p>{{ assistant_result }}</p>
+                    </div>
+                {% endif %}
+
+                {% if assistant_error %}
+                    <div class="alert alert-danger">{{ assistant_error }}</div>
+                {% endif %}
+            {% else %}
+                <p>El asistente esta desactivado. Agrega `GEMINI_API_KEY` al archivo `.env` e instala la dependencia `google-genai`.</p>
+            {% endif %}
+        </article>
+    </div>
+
+    <article class="panel list-panel">
+        <div class="panel-heading">
+            <span class="section-kicker">Seguimiento</span>
+            <h3>Registro de vuelo</h3>
+        </div>
+
+        <div class="mission-list">
+            {% for mission in missions %}
+            <div class="mission-card status-{{ mission.status|replace(' ', '-') }} priority-{{ mission.priority }}">
+                <div class="mission-topline">
+                    <div>
+                        <span class="mission-id">OP-{{ mission.id }}0X</span>
+                        <h4>{{ mission.title }}</h4>
+                    </div>
+                    <span class="badge badge-{{ mission.priority }}">{{ mission.priority }}</span>
+                </div>
+
+                <div class="mission-meta">
+                    <span>Responsable: {{ mission.user.username if mission.user else current_user.username }}</span>
+                    <span>Estado: {{ mission.status }}</span>
+                </div>
+
+                <p class="mission-desc">{{ mission.description or "Sin descripcion adicional." }}</p>
+
+                <div class="progress-bar">
+                    <div class="fill {% if mission.status == 'COMPLETADA' %}full{% elif mission.status == 'EN PROGRESO' %}half{% endif %}"></div>
+                </div>
+
+                <div class="mission-controls">
+                    <span class="status-text">{{ mission.status }}</span>
+                    <div class="btn-group">
+                        {% if mission.status == 'PENDIENTE' %}
+                            <form method="POST" action="{{ url_for('update_mission', mission_id=mission.id, action='start') }}" class="inline-form">
+                                {{ action_form.csrf_token }}
+                                <button type="submit" class="btn-small btn-warn">Iniciar</button>
+                            </form>
+                        {% endif %}
+                        {% if mission.status == 'EN PROGRESO' %}
+                            <form method="POST" action="{{ url_for('update_mission', mission_id=mission.id, action='complete') }}" class="inline-form">
+                                {{ action_form.csrf_token }}
+                                <button type="submit" class="btn-small btn-success">Completar</button>
+                            </form>
+                        {% endif %}
+                        <form method="POST" action="{{ url_for('update_mission', mission_id=mission.id, action='delete') }}" class="inline-form">
+                            {{ action_form.csrf_token }}
+                            <button type="submit" class="btn-small btn-danger">Eliminar</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <span class="section-kicker">Sin actividad</span>
+                <h4>No hay misiones registradas todavia.</h4>
+                <p>Crea tu primera operacion desde el panel lateral para empezar a usar el centro de control.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </article>
+</section>
+{% endblock %}

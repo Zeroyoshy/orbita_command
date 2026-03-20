@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORBITA COMMAND</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="{% block body_class %}app-body{% endblock %}">
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="grid-fade"></div>
+
+    <div class="page-shell">
+        <header class="topbar">
+            <div class="brand-lockup">
+                <span class="eyebrow">Centro de control seguro</span>
+                <h1>Orbita Command</h1>
+                <p>Gestor de misiones con auditoria, IA y operaciones por prioridad.</p>
+            </div>
+
+            {% if current_user.is_authenticated %}
+                <nav class="operator-bar">
+                    <div class="meta-pill">
+                        <span class="meta-label">Operador</span>
+                        <strong>{{ current_user.username }}</strong>
+                    </div>
+                    <div class="meta-pill">
+                        <span class="meta-label">Rol</span>
+                        <strong>{{ current_user.role }}</strong>
+                    </div>
+                    <form method="POST" action="{{ url_for('logout') }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn-danger">Cerrar sesion</button>
+                    </form>
+                </nav>
+            {% endif %}
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="alerts">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <main class="main-shell">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</body>
+</html>

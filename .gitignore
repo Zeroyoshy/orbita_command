@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+instance/
+mission_logs.log
+.clang-module-cache/
+.swift-module-cache/
