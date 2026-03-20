@@ -51,5 +51,6 @@
 
 - `SECRET_KEY` se carga desde `.env`.
 - `GEMINI_API_KEY` se carga desde `.env`.
+- configuracion SMTP opcional para recuperacion de contrasena.
 - `.env.example` solo contiene placeholders.
 - `.gitignore` excluye `.env`.

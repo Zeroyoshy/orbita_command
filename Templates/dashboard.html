@@ -13,8 +13,8 @@
             <strong>{{ assistant_model if assistant_enabled else "No disponible" }}</strong>
         </div>
         <div class="meta-stack">
-            <span class="meta-caption">Estado de cabina</span>
-            <strong>Estable</strong>
+            <span class="meta-caption">MFA</span>
+            <strong>{{ "Activo" if mfa_enabled else "Pendiente" }}</strong>
         </div>
     </div>
 </section>

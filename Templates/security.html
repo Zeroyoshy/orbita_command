@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero-panel panel">
+    <div class="hero-copy">
+        <span class="section-kicker">Seguridad de cuenta</span>
+        <h2>Gestiona MFA y fortalece el acceso a tu operador.</h2>
+        <p>Activa autenticacion de dos factores con una app TOTP compatible como Google Authenticator, Authy o Microsoft Authenticator.</p>
+    </div>
+    <div class="hero-aside">
+        <div class="meta-stack">
+            <span class="meta-caption">Estado MFA</span>
+            <strong>{{ "Activo" if mfa_enabled else "Inactivo" }}</strong>
+        </div>
+    </div>
+</section>
+
+<section class="workspace-grid">
+    <div class="workspace-stack">
+        {% if not mfa_enabled %}
+        <article class="panel control-panel">
+            <div class="panel-heading">
+                <span class="section-kicker">Activacion</span>
+                <h3>Configurar TOTP</h3>
+            </div>
+            <p class="panel-intro">Escanea este QR con tu app autenticadora y luego escribe el codigo de 6 digitos para confirmar.</p>
+            <img src="{{ qr_code_data }}" alt="QR MFA" class="qr-preview">
+            <p class="manual-secret"><strong>Clave manual:</strong> {{ manual_secret }}</p>
+
+            <form method="POST">
+                {{ enable_form.hidden_tag() }}
+                <div class="form-group">
+                    {{ enable_form.totp_code.label(class="form-label") }}
+                    {{ enable_form.totp_code(class="nasa-input", placeholder="123456", inputmode="numeric") }}
+                </div>
+                <div class="form-actions">
+                    {{ enable_form.submit(class="btn-nasa") }}
+                </div>
+            </form>
+        </article>
+        {% else %}
+        <article class="panel control-panel">
+            <div class="panel-heading">
+                <span class="section-kicker">Proteccion activa</span>
+                <h3>MFA habilitado</h3>
+            </div>
+            <p class="panel-intro">Tu cuenta ya requiere codigo TOTP al iniciar sesion.</p>
+
+            <form method="POST">
+                {{ disable_form.hidden_tag() }}
+                <div class="form-group">
+                    {{ disable_form.password.label(class="form-label") }}
+                    {{ disable_form.password(class="nasa-input", placeholder="Clave actual") }}
+                </div>
+                <div class="form-group">
+                    {{ disable_form.totp_code.label(class="form-label") }}
+                    {{ disable_form.totp_code(class="nasa-input", placeholder="123456", inputmode="numeric") }}
+                </div>
+                <div class="form-actions">
+                    {{ disable_form.submit(class="btn-danger") }}
+                </div>
+            </form>
+        </article>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

@@ -22,6 +22,10 @@ Variables soportadas:
 - `GEMINI_API_KEY`: clave para activar el asistente IA.
 - `GEMINI_MODEL`: modelo de Gemini a usar.
 - `LOG_TO_FILE`: escribe logs en `mission_logs.log` cuando vale `true`.
+- `MFA_ISSUER`: nombre mostrado en apps TOTP.
+- `PASSWORD_RESET_TOKEN_MAX_AGE`: duracion del enlace de recuperacion en segundos.
+- `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_USE_TLS`: configuracion SMTP.
+- `MAIL_SUPPRESS_SEND`: si vale `true`, no envia correos y registra el enlace en logs.
 
 ## Ejecucion
 
@@ -75,6 +79,15 @@ No uses SQLite para produccion. Para hosting real utiliza Postgres con `DATABASE
 4. En el dashboard aparecera el panel `ASISTENTE IA`.
 
 El asistente puede resumir una mision, sugerir riesgos, proponer pasos siguientes y detectar informacion faltante.
+
+## MFA y recuperacion de clave
+
+El proyecto incluye:
+
+- MFA opcional con TOTP desde `/security`
+- recuperacion de contrasena desde `/forgot-password`
+
+Si no configuras SMTP pero activas `MAIL_SUPPRESS_SEND=true`, el enlace de recuperacion se deja en logs para pruebas.
 
 ## Controles de seguridad implementados
 

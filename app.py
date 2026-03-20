@@ -1,7 +1,12 @@
+import base64
 import logging
 import os
+import secrets
+import smtplib
 import sys
 from datetime import timedelta
+from email.message import EmailMessage
+from io import BytesIO
 
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
@@ -15,11 +20,14 @@ from flask_login import (
 )
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+import qrcode
 from sqlalchemy import func, inspect, text
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
+import pyotp
 from wtforms import PasswordField, SelectField, StringField, SubmitField, TextAreaField
-from wtforms.validators import DataRequired, EqualTo, Length, Optional, Regexp, ValidationError
+from wtforms.validators import DataRequired, Email, EqualTo, Length, Optional, Regexp, ValidationError
 
 try:
     from google import genai
@@ -34,6 +42,8 @@ PASSWORD_POLICY = (
     r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,128}$"
 )
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_MFA_ISSUER = "ORBITA COMMAND"
+DEFAULT_PASSWORD_RESET_MAX_AGE = 3600
 
 db = SQLAlchemy()
 login_manager = LoginManager()
@@ -65,8 +75,11 @@ def validate_no_html(_form, field):
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(120), nullable=True)
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(20), nullable=False, default=ROLE_OPERATOR)
+    mfa_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    mfa_secret = db.Column(db.String(32), nullable=True)
     missions = db.relationship("Mission", back_populates="user", cascade="all, delete-orphan")
 
     def set_password(self, password):
@@ -78,6 +91,20 @@ class User(UserMixin, db.Model):
     @property
     def is_admin(self):
         return self.role == ROLE_ADMIN
+
+    def ensure_mfa_secret(self):
+        if not self.mfa_secret:
+            self.mfa_secret = pyotp.random_base32()
+
+    def get_totp_uri(self, issuer_name):
+        self.ensure_mfa_secret()
+        label = self.email or self.username
+        return pyotp.TOTP(self.mfa_secret).provisioning_uri(name=label, issuer_name=issuer_name)
+
+    def verify_totp(self, code):
+        if not self.mfa_secret or not code:
+            return False
+        return pyotp.TOTP(self.mfa_secret).verify(code, valid_window=1)
 
 
 class Mission(db.Model):
@@ -108,6 +135,11 @@ class LoginForm(FlaskForm):
         filters=[lambda value: value.strip() if value else value],
     )
     password = PasswordField("Clave", validators=[DataRequired()])
+    totp_code = StringField(
+        "Codigo MFA",
+        validators=[Optional(), Length(min=6, max=6), Regexp(r"^\d{6}$", message="El codigo MFA debe tener 6 digitos.")],
+        filters=[lambda value: value.strip() if value else value],
+    )
     submit = SubmitField("ACCEDER SISTEMA")
 
 
@@ -123,6 +155,11 @@ class RegisterForm(FlaskForm):
             ),
         ],
         filters=[lambda value: value.strip() if value else value],
+    )
+    email = StringField(
+        "Correo",
+        validators=[DataRequired(), Email(), Length(max=120)],
+        filters=[lambda value: value.strip().lower() if value else value],
     )
     password = PasswordField(
         "Clave",
@@ -194,6 +231,56 @@ class AssistantForm(FlaskForm):
     submit = SubmitField("CONSULTAR IA")
 
 
+class PasswordResetRequestForm(FlaskForm):
+    email = StringField(
+        "Correo registrado",
+        validators=[DataRequired(), Email(), Length(max=120)],
+        filters=[lambda value: value.strip().lower() if value else value],
+    )
+    submit = SubmitField("ENVIAR ENLACE")
+
+
+class PasswordResetForm(FlaskForm):
+    password = PasswordField(
+        "Nueva clave",
+        validators=[
+            DataRequired(),
+            Length(min=12, max=128),
+            Regexp(
+                PASSWORD_POLICY,
+                message=(
+                    "La clave debe tener 12 caracteres minimo, mayusculas, "
+                    "minusculas, numeros y simbolos."
+                ),
+            ),
+        ],
+    )
+    confirm = PasswordField(
+        "Confirmar nueva clave",
+        validators=[DataRequired(), EqualTo("password", message="Las claves no coinciden.")],
+    )
+    submit = SubmitField("ACTUALIZAR CLAVE")
+
+
+class EnableMFAForm(FlaskForm):
+    totp_code = StringField(
+        "Codigo de verificacion",
+        validators=[DataRequired(), Length(min=6, max=6), Regexp(r"^\d{6}$", message="Ingresa un codigo TOTP valido.")],
+        filters=[lambda value: value.strip() if value else value],
+    )
+    submit = SubmitField("ACTIVAR MFA")
+
+
+class DisableMFAForm(FlaskForm):
+    password = PasswordField("Clave actual", validators=[DataRequired()])
+    totp_code = StringField(
+        "Codigo MFA",
+        validators=[DataRequired(), Length(min=6, max=6), Regexp(r"^\d{6}$", message="Ingresa un codigo TOTP valido.")],
+        filters=[lambda value: value.strip() if value else value],
+    )
+    submit = SubmitField("DESACTIVAR MFA")
+
+
 def flash_form_errors(form):
     for field_name, errors in form.errors.items():
         field = getattr(form, field_name, None)
@@ -217,6 +304,75 @@ def log_event(level, event, **details):
 
 def can_manage_mission(user, mission):
     return user.is_authenticated and (user.is_admin or mission.user_id == user.id)
+
+
+def generate_qr_code_data_uri(content):
+    image = qrcode.make(content)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def get_reset_serializer(app):
+    return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="password-reset")
+
+
+def generate_password_reset_token(app, user):
+    return get_reset_serializer(app).dumps({"user_id": user.id, "purpose": "password-reset"})
+
+
+def load_password_reset_user(app, token):
+    try:
+        data = get_reset_serializer(app).loads(
+            token,
+            max_age=app.config["PASSWORD_RESET_TOKEN_MAX_AGE"],
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    if data.get("purpose") != "password-reset":
+        return None
+    return db.session.get(User, int(data["user_id"]))
+
+
+def build_external_url(path):
+    base_url = os.getenv("APP_BASE_URL")
+    if base_url:
+        return f"{base_url.rstrip('/')}{path}"
+    return f"{request.url_root.rstrip('/')}{path}"
+
+
+def smtp_enabled(app):
+    required = ["MAIL_SERVER", "MAIL_PORT", "MAIL_FROM"]
+    return all(app.config.get(key) for key in required)
+
+
+def send_password_reset_email(app, user, reset_url):
+    if app.config.get("MAIL_SUPPRESS_SEND"):
+        app.config["LAST_PASSWORD_RESET_LINK"] = reset_url
+        log_event("info", "password_reset_link_generated", email=user.email, reset_url=reset_url)
+        return
+
+    if not smtp_enabled(app):
+        log_event("warning", "password_reset_smtp_missing", email=user.email, reset_url=reset_url)
+        return
+
+    message = EmailMessage()
+    message["Subject"] = "ORBITA COMMAND - Recuperacion de contraseña"
+    message["From"] = app.config["MAIL_FROM"]
+    message["To"] = user.email
+    message.set_content(
+        "Recibimos una solicitud para restablecer tu clave.\n\n"
+        f"Abre este enlace para continuar:\n{reset_url}\n\n"
+        "Si no solicitaste el cambio, puedes ignorar este correo."
+    )
+
+    with smtplib.SMTP(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]) as server:
+        if app.config["MAIL_USE_TLS"]:
+            server.starttls()
+        if app.config.get("MAIL_USERNAME"):
+            server.login(app.config["MAIL_USERNAME"], app.config["MAIL_PASSWORD"])
+        server.send_message(message)
 
 
 def assistant_available(app):
@@ -291,10 +447,10 @@ def initialize_database():
     inspector = inspect(db.engine)
     if inspector.has_table("user"):
         user_columns = {column["name"] for column in inspector.get_columns("user")}
-        if "role" not in user_columns:
-            preparer = db.engine.dialect.identifier_preparer
-            quoted_user_table = preparer.quote(User.__table__.name)
-            with db.engine.begin() as connection:
+        preparer = db.engine.dialect.identifier_preparer
+        quoted_user_table = preparer.quote(User.__table__.name)
+        with db.engine.begin() as connection:
+            if "role" not in user_columns:
                 connection.execute(
                     text(
                         f"ALTER TABLE {quoted_user_table} "
@@ -306,6 +462,21 @@ def initialize_database():
                         f"UPDATE {quoted_user_table} "
                         "SET role = 'OPERADOR' WHERE role IS NULL"
                     )
+                )
+            if "email" not in user_columns:
+                connection.execute(
+                    text(f"ALTER TABLE {quoted_user_table} ADD COLUMN email VARCHAR(120)")
+                )
+            if "mfa_enabled" not in user_columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {quoted_user_table} "
+                        "ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                )
+            if "mfa_secret" not in user_columns:
+                connection.execute(
+                    text(f"ALTER TABLE {quoted_user_table} ADD COLUMN mfa_secret VARCHAR(32)")
                 )
 
     first_user = db.session.execute(
@@ -354,6 +525,18 @@ def create_app(test_config=None):
         GEMINI_API_KEY=os.getenv("GEMINI_API_KEY"),
         GEMINI_MODEL=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
         GEMINI_CLIENT_FACTORY=None,
+        MFA_ISSUER=os.getenv("MFA_ISSUER", DEFAULT_MFA_ISSUER),
+        PASSWORD_RESET_TOKEN_MAX_AGE=int(
+            os.getenv("PASSWORD_RESET_TOKEN_MAX_AGE", str(DEFAULT_PASSWORD_RESET_MAX_AGE))
+        ),
+        MAIL_SERVER=os.getenv("MAIL_SERVER"),
+        MAIL_PORT=int(os.getenv("MAIL_PORT", "587")),
+        MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+        MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+        MAIL_FROM=os.getenv("MAIL_FROM"),
+        MAIL_USE_TLS=os.getenv("MAIL_USE_TLS", "true").lower() == "true",
+        MAIL_SUPPRESS_SEND=os.getenv("MAIL_SUPPRESS_SEND", "false").lower() == "true",
+        LAST_PASSWORD_RESET_LINK=None,
         TESTING=False,
     )
     if test_config:
@@ -465,6 +648,9 @@ def create_app(test_config=None):
             existing_user = db.session.execute(
                 db.select(User).filter_by(username=form.username.data)
             ).scalar_one_or_none()
+            existing_email = db.session.execute(
+                db.select(User).filter_by(email=form.email.data)
+            ).scalar_one_or_none()
             if existing_user:
                 log_event(
                     "warning",
@@ -473,18 +659,27 @@ def create_app(test_config=None):
                     username=form.username.data,
                 )
                 flash("ERROR: Identidad duplicada en sistema.", "danger")
+            elif existing_email:
+                log_event(
+                    "warning",
+                    "registration_duplicate_email",
+                    email=form.email.data,
+                    ip=client_ip(),
+                )
+                flash("ERROR: El correo ya esta registrado.", "danger")
             else:
                 total_users = db.session.execute(
                     db.select(func.count(User.id))
                 ).scalar_one()
                 role = ROLE_ADMIN if total_users == 0 else ROLE_OPERATOR
-                user = User(username=form.username.data, role=role)
+                user = User(username=form.username.data, email=form.email.data, role=role)
                 user.set_password(form.password.data)
                 db.session.add(user)
                 db.session.commit()
                 log_event(
                     "info",
                     "registration_success",
+                    email=user.email,
                     ip=client_ip(),
                     role=role,
                     username=user.username,
@@ -507,6 +702,16 @@ def create_app(test_config=None):
                 db.select(User).filter_by(username=form.username.data)
             ).scalar_one_or_none()
             if user and user.check_password(form.password.data):
+                if user.mfa_enabled:
+                    if not user.verify_totp(form.totp_code.data):
+                        log_event(
+                            "warning",
+                            "login_mfa_failure",
+                            ip=client_ip(),
+                            username=user.username,
+                        )
+                        flash("Codigo MFA invalido.", "danger")
+                        return render_template("login.html", form=form)
                 session.permanent = True
                 login_user(user, remember=False)
                 log_event(
@@ -530,6 +735,63 @@ def create_app(test_config=None):
             flash_form_errors(form)
 
         return render_template("login.html", form=form)
+
+    @app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password():
+        if current_user.is_authenticated:
+            return redirect(url_for("dashboard"))
+
+        form = PasswordResetRequestForm()
+        if form.validate_on_submit():
+            user = db.session.execute(
+                db.select(User).filter_by(email=form.email.data)
+            ).scalar_one_or_none()
+            if user:
+                token = generate_password_reset_token(app, user)
+                reset_url = build_external_url(url_for("reset_password", token=token))
+                send_password_reset_email(app, user, reset_url)
+                log_event(
+                    "info",
+                    "password_reset_requested",
+                    email=user.email,
+                    username=user.username,
+                )
+            flash(
+                "Si existe una cuenta asociada a ese correo, se genero un enlace de recuperacion.",
+                "success",
+            )
+            return redirect(url_for("login"))
+        elif form.is_submitted():
+            flash_form_errors(form)
+
+        return render_template("forgot_password.html", form=form)
+
+    @app.route("/reset-password/<token>", methods=["GET", "POST"])
+    def reset_password(token):
+        if current_user.is_authenticated:
+            return redirect(url_for("dashboard"))
+
+        user = load_password_reset_user(app, token)
+        if not user:
+            flash("El enlace de recuperacion es invalido o ya vencio.", "danger")
+            return redirect(url_for("forgot_password"))
+
+        form = PasswordResetForm()
+        if form.validate_on_submit():
+            user.set_password(form.password.data)
+            db.session.commit()
+            log_event(
+                "info",
+                "password_reset_completed",
+                email=user.email,
+                username=user.username,
+            )
+            flash("Clave actualizada correctamente. Ya puedes iniciar sesion.", "success")
+            return redirect(url_for("login"))
+        elif form.is_submitted():
+            flash_form_errors(form)
+
+        return render_template("reset_password.html", form=form)
 
     @app.route("/dashboard", methods=["GET", "POST"])
     @login_required
@@ -576,8 +838,57 @@ def create_app(test_config=None):
             assistant_error=assistant_error,
             assistant_enabled=assistant_available(app),
             assistant_model=app.config["GEMINI_MODEL"],
+            mfa_enabled=current_user.mfa_enabled,
             missions=missions,
             stats=stats,
+        )
+
+    @app.route("/security", methods=["GET", "POST"])
+    @login_required
+    def security():
+        enable_form = EnableMFAForm(prefix="enable")
+        disable_form = DisableMFAForm(prefix="disable")
+
+        if enable_form.submit.data and enable_form.validate_on_submit():
+            current_user.ensure_mfa_secret()
+            if current_user.verify_totp(enable_form.totp_code.data):
+                current_user.mfa_enabled = True
+                db.session.commit()
+                log_event("info", "mfa_enabled", username=current_user.username)
+                flash("MFA activado correctamente.", "success")
+                return redirect(url_for("security"))
+            flash("No se pudo validar el codigo TOTP.", "danger")
+
+        if disable_form.submit.data and disable_form.validate_on_submit():
+            if not current_user.check_password(disable_form.password.data):
+                flash("La clave actual no coincide.", "danger")
+            elif not current_user.verify_totp(disable_form.totp_code.data):
+                flash("El codigo MFA es invalido.", "danger")
+            else:
+                current_user.mfa_enabled = False
+                current_user.mfa_secret = None
+                db.session.commit()
+                log_event("info", "mfa_disabled", username=current_user.username)
+                flash("MFA desactivado correctamente.", "success")
+                return redirect(url_for("security"))
+
+        qr_code_data = None
+        manual_secret = None
+        if not current_user.mfa_enabled:
+            current_user.ensure_mfa_secret()
+            db.session.commit()
+            manual_secret = current_user.mfa_secret
+            qr_code_data = generate_qr_code_data_uri(
+                current_user.get_totp_uri(app.config["MFA_ISSUER"])
+            )
+
+        return render_template(
+            "security.html",
+            enable_form=enable_form,
+            disable_form=disable_form,
+            mfa_enabled=current_user.mfa_enabled,
+            qr_code_data=qr_code_data,
+            manual_secret=manual_secret,
         )
 
     @app.route("/assistant", methods=["POST"])

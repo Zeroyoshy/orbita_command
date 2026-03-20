@@ -21,3 +21,21 @@ services:
         value: "true"
       - key: LOG_TO_FILE
         value: "false"
+      - key: MFA_ISSUER
+        value: ORBITA COMMAND
+      - key: PASSWORD_RESET_TOKEN_MAX_AGE
+        value: "3600"
+      - key: MAIL_SERVER
+        sync: false
+      - key: MAIL_PORT
+        value: "587"
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: MAIL_USE_TLS
+        value: "true"
+      - key: MAIL_SUPPRESS_SEND
+        value: "false"

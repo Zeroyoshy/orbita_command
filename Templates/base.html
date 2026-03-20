@@ -29,6 +29,7 @@
                         <span class="meta-label">Rol</span>
                         <strong>{{ current_user.role }}</strong>
                     </div>
+                    <a href="{{ url_for('security') }}" class="btn-small btn-ghost">Seguridad</a>
                     <form method="POST" action="{{ url_for('logout') }}" class="inline-form">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn-danger">Cerrar sesion</button>

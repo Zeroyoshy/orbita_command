@@ -2,7 +2,9 @@ import os
 import tempfile
 import unittest
 
-from app import Mission, User, create_app, db
+import pyotp
+
+from app import Mission, User, create_app, db, generate_password_reset_token
 
 
 class FakeModelsClient:
@@ -38,6 +40,7 @@ class SecurityTestCase(unittest.TestCase):
                 "GEMINI_API_KEY": "test-gemini-key",
                 "GEMINI_MODEL": "gemini-2.5-flash",
                 "GEMINI_CLIENT_FACTORY": lambda _api_key: FakeGeminiClient(),
+                "MAIL_SUPPRESS_SEND": True,
             }
         )
         self.client = self.app.test_client()
@@ -52,11 +55,12 @@ class SecurityTestCase(unittest.TestCase):
             db.drop_all()
         os.unlink(self.db_path)
 
-    def register(self, username, password):
+    def register(self, username, password, email=None):
         return self.client.post(
             "/register",
             data={
                 "username": username,
+                "email": email or f"{username}@example.com",
                 "password": password,
                 "confirm": password,
             },
@@ -131,6 +135,70 @@ class SecurityTestCase(unittest.TestCase):
         response = self.client.get("/healthz")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"status": "ok"})
+
+    def test_password_reset_flow_updates_password(self):
+        old_password = "ClaveSegura#2026"
+        new_password = "ClaveNueva#2026"
+        self.register("admin_user", old_password, email="admin@example.com")
+
+        response = self.client.post(
+            "/forgot-password",
+            data={"email": "admin@example.com"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            user = db.session.execute(
+                db.select(User).filter_by(email="admin@example.com")
+            ).scalar_one()
+            token = generate_password_reset_token(self.app, user)
+
+        response = self.client.post(
+            f"/reset-password/{token}",
+            data={"password": new_password, "confirm": new_password},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            user = db.session.execute(
+                db.select(User).filter_by(email="admin@example.com")
+            ).scalar_one()
+            self.assertTrue(user.check_password(new_password))
+
+    def test_login_requires_totp_when_mfa_enabled(self):
+        password = "ClaveSegura#2026"
+        self.register("admin_user", password, email="admin@example.com")
+
+        with self.app.app_context():
+            user = db.session.execute(
+                db.select(User).filter_by(username="admin_user")
+            ).scalar_one()
+            user.mfa_secret = pyotp.random_base32()
+            user.mfa_enabled = True
+            db.session.commit()
+            totp_code = pyotp.TOTP(user.mfa_secret).now()
+
+        response = self.client.post(
+            "/login",
+            data={"username": "admin_user", "password": password},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Codigo MFA invalido", response.data)
+
+        response = self.client.post(
+            "/login",
+            data={
+                "username": "admin_user",
+                "password": password,
+                "totp_code": totp_code,
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Panel operativo", response.data)
 
     def test_assistant_route_returns_model_output(self):
         password = "ClaveSegura#2026"
