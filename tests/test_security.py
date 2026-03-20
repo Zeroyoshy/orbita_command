@@ -127,6 +127,11 @@ class SecurityTestCase(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
 
+    def test_healthz_route_is_available(self):
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"status": "ok"})
+
     def test_assistant_route_returns_model_output(self):
         password = "ClaveSegura#2026"
         self.register("admin_user", password)

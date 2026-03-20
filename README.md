@@ -21,6 +21,7 @@ Variables soportadas:
 - `ENFORCE_HTTPS`: `true` o `false`.
 - `GEMINI_API_KEY`: clave para activar el asistente IA.
 - `GEMINI_MODEL`: modelo de Gemini a usar.
+- `LOG_TO_FILE`: escribe logs en `mission_logs.log` cuando vale `true`.
 
 ## Ejecucion
 
@@ -35,6 +36,33 @@ La app arranca con TLS local (`ssl_context='adhoc'`). Abre la URL `https://127.0
 ```bash
 ./venv/bin/python -m unittest discover -s tests -v
 ```
+
+## Despliegue en Render
+
+El proyecto ya incluye [render.yaml](/Users/zeroyoshy/Downloads/orbita_command/render.yaml), `gunicorn` y soporte para Postgres.
+
+Flujo recomendado:
+
+1. Sube el proyecto a GitHub.
+2. Crea una base de datos Postgres en Render o Neon.
+3. En Render crea un `Web Service` conectado a tu repo.
+4. Configura estas variables:
+   - `SECRET_KEY`
+   - `DATABASE_URL`
+   - `GEMINI_API_KEY`
+   - `GEMINI_MODEL`
+   - `SESSION_TIMEOUT_MINUTES`
+   - `ENFORCE_HTTPS=true`
+   - `LOG_TO_FILE=false`
+5. Usa como health check ` /healthz `.
+
+Comando de arranque esperado:
+
+```bash
+gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4
+```
+
+No uses SQLite para produccion. Para hosting real utiliza Postgres con `DATABASE_URL`.
 
 ## Asistente IA
 

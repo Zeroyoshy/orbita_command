@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from datetime import timedelta
 
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ from flask_login import (
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
 from sqlalchemy import func, inspect, text
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from wtforms import PasswordField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, EqualTo, Length, Optional, Regexp, ValidationError
@@ -43,10 +45,15 @@ def load_environment():
 
 
 def configure_logging():
+    handlers = [logging.StreamHandler(sys.stdout)]
+    if os.getenv("LOG_TO_FILE", "true").lower() == "true":
+        handlers.append(logging.FileHandler("mission_logs.log"))
+
     logging.basicConfig(
-        filename="mission_logs.log",
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=handlers,
+        force=True,
     )
 
 
@@ -271,21 +278,32 @@ def extract_response_text(response):
     return "No se recibio texto en la respuesta del modelo."
 
 
+def normalize_database_url(database_url):
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql://", 1)
+    return database_url
+
+
 def initialize_database():
     db.create_all()
     inspector = inspect(db.engine)
     if inspector.has_table("user"):
         user_columns = {column["name"] for column in inspector.get_columns("user")}
         if "role" not in user_columns:
+            preparer = db.engine.dialect.identifier_preparer
+            quoted_user_table = preparer.quote(User.__table__.name)
             with db.engine.begin() as connection:
                 connection.execute(
                     text(
-                        "ALTER TABLE user "
+                        f"ALTER TABLE {quoted_user_table} "
                         "ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'OPERADOR'"
                     )
                 )
                 connection.execute(
-                    text("UPDATE user SET role = 'OPERADOR' WHERE role IS NULL")
+                    text(
+                        f"UPDATE {quoted_user_table} "
+                        "SET role = 'OPERADOR' WHERE role IS NULL"
+                    )
                 )
 
     first_user = db.session.execute(
@@ -316,7 +334,9 @@ def create_app(test_config=None):
     app = Flask(__name__, template_folder="Templates", static_folder="static")
     app.config.update(
         SECRET_KEY=secret_key,
-        SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL", "sqlite:///orbita.db"),
+        SQLALCHEMY_DATABASE_URI=normalize_database_url(
+            os.getenv("DATABASE_URL", "sqlite:///orbita.db")
+        ),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         MAX_CONTENT_LENGTH=1024 * 1024,
         SESSION_COOKIE_HTTPONLY=True,
@@ -337,6 +357,7 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
 
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     db.init_app(app)
     login_manager.init_app(app)
     csrf.init_app(app)
@@ -427,6 +448,10 @@ def create_app(test_config=None):
     @app.route("/")
     def index():
         return redirect(url_for("login"))
+
+    @app.route("/healthz")
+    def healthz():
+        return {"status": "ok"}, 200
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
