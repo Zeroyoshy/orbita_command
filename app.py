@@ -20,6 +20,7 @@ from flask_login import (
 )
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
+from flask_wtf.csrf import CSRFError
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 import qrcode
 from sqlalchemy import func, inspect, text
@@ -590,6 +591,24 @@ def create_app(test_config=None):
             400,
         )
 
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(error):
+        log_event(
+            "warning",
+            "csrf_validation_failed",
+            ip=client_ip(),
+            path=request.path,
+            reason=getattr(error, "description", "unknown"),
+        )
+        return (
+            render_template(
+                "error.html",
+                status_code=400,
+                message="La sesion del formulario vencio o el token CSRF no coincide. Recarga la pagina e intenta de nuevo.",
+            ),
+            400,
+        )
+
     @app.errorhandler(403)
     def handle_forbidden(_error):
         return (
@@ -965,10 +984,27 @@ def create_app(test_config=None):
     def update_mission(mission_id, action):
         form = ActionForm()
         if not form.validate_on_submit():
-            abort(400)
+            log_event(
+                "warning",
+                "mission_action_invalid_form",
+                actor=current_user.username,
+                mission_id=mission_id,
+                action=action,
+                errors=form.errors,
+            )
+            flash("No se pudo aplicar el cambio. Recarga el panel e intenta de nuevo.", "danger")
+            return redirect(url_for("dashboard"))
 
         if action not in VALID_MISSION_ACTIONS:
-            abort(400)
+            log_event(
+                "warning",
+                "mission_action_invalid_action",
+                actor=current_user.username,
+                mission_id=mission_id,
+                action=action,
+            )
+            flash("La accion solicitada no es valida.", "danger")
+            return redirect(url_for("dashboard"))
 
         mission = db.session.get(Mission, mission_id)
         if not mission:
@@ -984,9 +1020,31 @@ def create_app(test_config=None):
             abort(403)
 
         if action == "start":
+            if mission.status != "PENDIENTE":
+                log_event(
+                    "warning",
+                    "mission_action_invalid_state",
+                    actor=current_user.username,
+                    mission_id=mission_id,
+                    action=action,
+                    current_status=mission.status,
+                )
+                flash("Solo puedes iniciar misiones pendientes.", "warning")
+                return redirect(url_for("dashboard"))
             mission.status = "EN PROGRESO"
             event_name = "mission_started"
         elif action == "complete":
+            if mission.status != "EN PROGRESO":
+                log_event(
+                    "warning",
+                    "mission_action_invalid_state",
+                    actor=current_user.username,
+                    mission_id=mission_id,
+                    action=action,
+                    current_status=mission.status,
+                )
+                flash("Solo puedes completar misiones en progreso.", "warning")
+                return redirect(url_for("dashboard"))
             mission.status = "COMPLETADA"
             event_name = "mission_completed"
         else:

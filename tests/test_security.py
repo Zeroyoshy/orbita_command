@@ -136,6 +136,43 @@ class SecurityTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"status": "ok"})
 
+    def test_mission_can_move_from_pending_to_in_progress_to_completed(self):
+        password = "ClaveSegura#2026"
+        self.register("admin_user", password)
+        self.login("admin_user", password)
+
+        with self.app.app_context():
+            user = db.session.execute(
+                db.select(User).filter_by(username="admin_user")
+            ).scalar_one()
+            mission = Mission(
+                title="Orbita 2",
+                description="Secuencia de prueba",
+                priority="ALTA",
+                user_id=user.id,
+            )
+            db.session.add(mission)
+            db.session.commit()
+            mission_id = mission.id
+
+        response = self.client.post(
+            f"/mission/{mission_id}/start",
+            data={},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        response = self.client.post(
+            f"/mission/{mission_id}/complete",
+            data={},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            mission = db.session.get(Mission, mission_id)
+            self.assertEqual(mission.status, "COMPLETADA")
+
     def test_password_reset_flow_updates_password(self):
         old_password = "ClaveSegura#2026"
         new_password = "ClaveNueva#2026"
